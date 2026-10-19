@@ -68,6 +68,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- Sees apps' "now playing" info for the Recently used row. Reads no notifications.
+             Enabled by install.sh in setup mode. -->
+        <service
+            android:name=".MediaListener"
+            android:label="@string/media_label"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".Guard"
             android:label="@string/guard_label"

@@ -29,18 +29,23 @@ final class Recent {
         return mode == AppOpsManager.MODE_ALLOWED;
     }
 
+    /** Whether Shelf may see other apps' now-playing info (granted by install.sh --setup). */
+    static boolean mediaAllowed(Context c) {
+        android.app.NotificationManager nm =
+                (android.app.NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        return nm != null && nm.isNotificationListenerAccessGranted(
+                new android.content.ComponentName(c, MediaListener.class));
+    }
+
     /** Up to {@code max} of {@code apps}, most recently opened first. Slow: off the UI thread. */
     static List<Item> pick(Context c, List<Item> apps, List<String> hidden, int max) {
         List<Item> out = new ArrayList<>();
-        if (!allowed(c)) return out;
-        UsageStatsManager usm = (UsageStatsManager) c.getSystemService(Context.USAGE_STATS_SERVICE);
-        if (usm == null) return out;
         Map<String, Item> launchable = new HashMap<>();
         for (Item it : apps) launchable.put(it.id, it);
-
         long now = System.currentTimeMillis();
         Map<String, Long> last = new HashMap<>();
-        UsageEvents events = usm.queryEvents(now - WINDOW_MS, now);
+        UsageStatsManager usm = allowed(c) ? (UsageStatsManager) c.getSystemService(Context.USAGE_STATS_SERVICE) : null;
+        UsageEvents events = usm == null ? null : usm.queryEvents(now - WINDOW_MS, now);
         UsageEvents.Event e = new UsageEvents.Event();
         while (events != null && events.hasNextEvent()) {
             events.getNextEvent(e);
@@ -50,6 +55,13 @@ final class Recent {
             if (pkg.equals(c.getPackageName()) || pkg.equals(Guard.AMAZON)) continue;
             Long t = last.get(pkg);
             if (t == null || e.getTimeStamp() > t) last.put(pkg, e.getTimeStamp());
+        }
+        // What played (from the apps' own now-playing info) counts as use too.
+        for (Map.Entry<String, Long> h : History.times(c).entrySet()) {
+            String pkg = h.getKey();
+            if (!launchable.containsKey(pkg) || hidden.contains(pkg)) continue;
+            Long t = last.get(pkg);
+            if (t == null || h.getValue() > t) last.put(pkg, h.getValue());
         }
         List<Map.Entry<String, Long>> sorted = new ArrayList<>(last.entrySet());
         sorted.sort((a, b) -> Long.compare(b.getValue(), a.getValue()));

@@ -779,7 +779,19 @@ public final class Home extends Activity {
     }
 
     private void open(Tile t) {
-        launch(new Intent(t.item.intent), Catalog.APPS.equals(t.kind) ? t.item.id : null);
+        if (Catalog.RECENT.equals(t.kind)) {
+            // Back to what was playing, when the app still has it open; otherwise the app itself.
+            android.app.PendingIntent resume = History.opener(t.item.id);
+            if (resume != null) {
+                try {
+                    resume.send();
+                    return;
+                } catch (android.app.PendingIntent.CanceledException ignored) {
+                    // the app closed that session; open the app instead
+                }
+            }
+        }
+        launch(new Intent(t.item.intent), Catalog.APPS.equals(t.kind) || Catalog.RECENT.equals(t.kind) ? t.item.id : null);
     }
 
     private void launch(Intent i, String pkg) {
@@ -1162,10 +1174,23 @@ public final class Home extends Activity {
             recentStrip.addView(t, gapped());
             if (it.id.equals(keep)) restore = t;
             if (!it.artRequested) loadArt(it);
+            if ("titles".equals(cfg.get(Config.RECENT_MEDIA))) loadMedia(t, size[0]);
         }
         recentBox.setVisibility(recentItems.isEmpty() ? View.GONE : View.VISIBLE);
         if (restore != null) restore.requestFocus();
         else if (keep != null) focusFirst();
+    }
+
+    /** Fills a recent tile with what last played in that app, if anything was recorded. */
+    private void loadMedia(Tile t, int width) {
+        Context app = getApplicationContext();
+        String pkg = t.item.id;
+        io.execute(() -> {
+            History.Entry e = History.get(app, pkg);
+            if (e == null) return;
+            android.graphics.Bitmap art = History.artwork(app, pkg, width);
+            ui.post(() -> t.setMedia(art, e.title, e.subtitle));
+        });
     }
 
     private void recentMenu(Tile t) {

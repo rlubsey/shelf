@@ -68,6 +68,9 @@ final class Config {
     static final Choice RECENT = new Choice("recent", "Recently used row", "on",
             new String[] {"on", "off"},
             new String[] {"Shown", "Hidden"});
+    static final Choice RECENT_MEDIA = new Choice("recent.media", "Recently used shows", "titles",
+            new String[] {"titles", "apps"},
+            new String[] {"What you watched", "Apps only"});
     static final Choice TEMP = new Choice("temp", "Weather by the clock", "c",
             new String[] {"c", "f", "off"},
             new String[] {"°C", "°F", "Hidden"});

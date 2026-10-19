@@ -70,6 +70,7 @@ if [[ $mode == undo ]]; then
   set_guard ""
   sh_ appops set $PKG SYSTEM_ALERT_WINDOW default >/dev/null 2>&1 || true
   sh_ appops set $PKG GET_USAGE_STATS default >/dev/null 2>&1 || true
+  sh_ cmd notification disallow_listener $PKG/$PKG.MediaListener >/dev/null 2>&1 || true
   sh_ am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null
   echo "HOME handed back to Amazon's launcher (Shelf stays installed: adb uninstall $PKG)"
   exit 0
@@ -113,6 +114,12 @@ if sh_ appops set $PKG GET_USAGE_STATS allow 2>/dev/null; then
   echo "recently used: allowed"
 else
   echo "note: could not allow usage access; the Recently used row stays hidden" >&2
+fi
+# "Recently used" titles: lets Shelf see what's playing in other apps (media sessions only).
+if sh_ cmd notification allow_listener $PKG/$PKG.MediaListener 2>/dev/null; then
+  echo "what you watched: allowed"
+else
+  echo "note: could not allow now-playing access; Recently used shows apps only" >&2
 fi
 sh_ cmd package set-home-activity $PKG/.Home >/dev/null 2>&1 || true
 set_futurity on

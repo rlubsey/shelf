@@ -1,6 +1,7 @@
 package tv.shelf.home;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.DashPathEffect;
 import android.graphics.LinearGradient;
@@ -44,6 +45,18 @@ final class Tile extends View {
     private boolean moving;
     private final boolean app;
 
+    // "Recently used" with now-playing info: artwork, title and subtitle, plus the app's badge
+    private Bitmap media;
+    private String mediaTitle, mediaSub;
+    private final Paint mediaPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+    private final Paint fade = new Paint();
+    private final Paint badgeBg = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint mTitle = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final TextPaint mSub = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final Path badgeClip = new Path();
+    private final Rect src = new Rect();
+    private final RectF dst = new RectF();
+
     Tile(Context c, Item item, String kind, CharSequence title, int cardW, int cardH, String labels) {
         super(c);
         this.item = item;
@@ -75,6 +88,16 @@ final class Tile extends View {
         under.setTextSize(Ui.dp(c, 14));
         under.setShadowLayer(Ui.dp(c, 4), 0, Ui.dp(c, 1), 0xB3000000);
 
+        mTitle.setColor(0xFFFFFFFF);
+        mTitle.setTypeface(Ui.MEDIUM);
+        mTitle.setTextSize(Math.max(Ui.dp(c, 12), cardH * 0.13f));
+        mTitle.setShadowLayer(Ui.dp(c, 3), 0, Ui.dp(c, 1), 0xB3000000);
+        mSub.setColor(0xCCFFFFFF);
+        mSub.setTypeface(Ui.MEDIUM);
+        mSub.setTextSize(Math.max(Ui.dp(c, 10), cardH * 0.1f));
+        mSub.setShadowLayer(Ui.dp(c, 3), 0, Ui.dp(c, 1), 0xB3000000);
+        badgeBg.setColor(0xE61C1D22);
+
         setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View view, Outline outline) {
@@ -86,6 +109,15 @@ final class Tile extends View {
         setClickable(true);
         setLongClickable(true);
         setContentDescription(title);
+    }
+
+    /** Shows what last played in this app instead of the plain app banner. */
+    void setMedia(Bitmap art, String title, String sub) {
+        media = art;
+        mediaTitle = title;
+        mediaSub = sub == null || sub.isEmpty() ? null : sub;
+        setContentDescription(title + (mediaSub == null ? "" : ", " + mediaSub) + ", in " + this.title);
+        invalidate();
     }
 
     void setMoving(boolean on) {
@@ -107,6 +139,8 @@ final class Tile extends View {
         card.set(0, 0, cardW, cardH);
         clip.reset();
         clip.addRoundRect(card, radius, radius, Path.Direction.CW);
+        fade.setShader(new LinearGradient(0, cardH * 0.35f, 0, cardH,
+                new int[] {0x00000000, 0xE6000000}, null, Shader.TileMode.CLAMP));
         sheen.setShader(new LinearGradient(0, 0, cardW * 0.55f, cardH * 0.9f,
                 new int[] {0x47FFFFFF, 0x14FFFFFF, 0x00FFFFFF}, new float[] {0f, 0.45f, 1f},
                 Shader.TileMode.CLAMP));
@@ -130,7 +164,9 @@ final class Tile extends View {
         canvas.save();
         canvas.clipPath(clip);
         canvas.drawRect(card, fill);
-        if (banner != null) {
+        if (mediaTitle != null) {
+            drawMedia(canvas, banner, icon);
+        } else if (banner != null) {
             banner.setBounds(0, 0, cardW, cardH);
             banner.draw(canvas);
         } else if (icon != null) {
@@ -156,9 +192,60 @@ final class Tile extends View {
             drawArrows(canvas);
         }
         boolean label = labelAlways || labelOnFocus && focused;
-        if (labelH > 0 && label && banner != null) {
+        if (labelH > 0 && label && (banner != null || mediaTitle != null)) {
             drawLine(canvas, under, cardW / 2f, cardH + labelH - Ui.dp(getContext(), 7));
         }
+    }
+
+    private void drawMedia(Canvas canvas, Drawable banner, Drawable icon) {
+        if (media != null) {
+            // centre-crop the artwork into the card
+            float scale = Math.max(cardW / (float) media.getWidth(), cardH / (float) media.getHeight());
+            int sw = Math.round(cardW / scale), sh = Math.round(cardH / scale);
+            int sx = (media.getWidth() - sw) / 2, sy = (media.getHeight() - sh) / 2;
+            src.set(sx, sy, sx + sw, sy + sh);
+            dst.set(0, 0, cardW, cardH);
+            canvas.drawBitmap(media, src, dst, mediaPaint);
+        } else if (banner != null) {
+            banner.setBounds(0, 0, cardW, cardH);
+            banner.setAlpha(110);
+            banner.draw(canvas);
+            banner.setAlpha(255);
+        }
+        canvas.drawRect(0, cardH * 0.35f, cardW, cardH, fade);
+
+        // the app's badge, top left
+        float m = Ui.dp(getContext(), 8);
+        float bw = cardW * 0.3f, bh = bw * 9 / 16f;
+        dst.set(m, m, m + bw, m + bh);
+        float r = Ui.dp(getContext(), 5);
+        canvas.drawRoundRect(dst, r, r, badgeBg);
+        Drawable d = banner != null ? banner : icon;
+        if (d != null) {
+            canvas.save();
+            badgeClip.reset();
+            badgeClip.addRoundRect(dst, r, r, Path.Direction.CW);
+            canvas.clipPath(badgeClip);
+            if (banner != null) {
+                d.setBounds(Math.round(dst.left), Math.round(dst.top), Math.round(dst.right), Math.round(dst.bottom));
+            } else {
+                int s = Math.round(bh * 0.8f), cx = Math.round(dst.centerX()), cy = Math.round(dst.centerY());
+                d.setBounds(cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2);
+            }
+            d.draw(canvas);
+            canvas.restore();
+        }
+
+        // title and subtitle, bottom left
+        float pad = Ui.dp(getContext(), 10), room = cardW - 2 * pad;
+        float base = cardH - pad;
+        if (mediaSub != null) {
+            CharSequence s = TextUtils.ellipsize(mediaSub, mSub, room, TextUtils.TruncateAt.END);
+            canvas.drawText(s, 0, s.length(), pad, base, mSub);
+            base -= mSub.getTextSize() * 1.25f;
+        }
+        CharSequence t = TextUtils.ellipsize(mediaTitle, mTitle, room, TextUtils.TruncateAt.END);
+        canvas.drawText(t, 0, t.length(), pad, base, mTitle);
     }
 
     private void drawLine(Canvas canvas, TextPaint paint, float x, float baseline) {
