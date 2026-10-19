@@ -45,12 +45,21 @@ jobs:
       - name: Signing key
         env:
           KEYSTORE_B64: ${{ secrets.SHELF_KEYSTORE_B64 }}
+          KEYPASS: ${{ secrets.SHELF_KEYPASS }}
         run: |
           if [ -z "$KEYSTORE_B64" ]; then
             echo "::error::Add the SHELF_KEYSTORE_B64 secret first (see the top of this file)."
             exit 1
           fi
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          # Stray spaces or line breaks from a copy-paste are dropped before decoding.
+          printf '%s' "$KEYSTORE_B64" | tr -d ' \r\n\t' | base64 -d > "$RUNNER_TEMP/release.keystore" || {
+            echo "::error::SHELF_KEYSTORE_B64 is not valid base64. Re-create it with: base64 -i release.keystore | tr -d '\\n' | gh secret set SHELF_KEYSTORE_B64"
+            exit 1
+          }
+          keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "$KEYPASS" > /dev/null || {
+            echo "::error::The keystore and SHELF_KEYPASS don't match. Re-create SHELF_KEYPASS (shelfhome unless you changed it)."
+            exit 1
+          }
 
       - name: Build
         env:
