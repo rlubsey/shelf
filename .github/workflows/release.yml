@@ -1,0 +1,77 @@
+# Builds a signed Shelf APK on every push to main and publishes it as a GitHub release.
+# Shelf on the TV checks the latest release (Options › Check for updates, and once a day).
+#
+# Needs two repository secrets (Settings › Secrets and variables › Actions):
+#   SHELF_KEYSTORE_B64  base64 of release.keystore   (base64 -i release.keystore | pbcopy)
+#   SHELF_KEYPASS       its password                 (shelfhome unless you changed it)
+name: Release Shelf
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "res/**"
+      - "AndroidManifest.xml"
+      - "build.sh"
+      - "version.env"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK pieces
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-28" "build-tools;34.0.0" > /dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.SHELF_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Add the SHELF_KEYSTORE_B64 secret first (see the top of this file)."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Build
+        env:
+          SHELF_KEYSTORE: ${{ runner.temp }}/release.keystore
+          SHELF_KEYPASS: ${{ secrets.SHELF_KEYPASS }}
+          SHELF_VERSION_CODE: ${{ github.run_number }}
+          SHELF_VERSION_NAME: 1.${{ github.run_number }}
+        run: |
+          export SHELF_VERSION_CODE=$((100 + SHELF_VERSION_CODE))
+          echo "VERSION_CODE=$SHELF_VERSION_CODE" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$SHELF_VERSION_NAME" >> "$GITHUB_ENV"
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          gh release create "build-$VERSION_CODE" build/shelf-home.apk \
+            --title "Shelf $VERSION_NAME" \
+            --notes "${NOTES:-Manual build}" \
+            --latest
+          rm -f "$RUNNER_TEMP/release.keystore"
