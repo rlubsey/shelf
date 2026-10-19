@@ -15,6 +15,10 @@ An Apple TV–style home screen for Fire TV, forked from
 - **Score alerts over other apps:** while you're in YouTube, Prime Video or an HDMI input, a
   banner slides in at the top right for kick-off, goals, half-time and full-time in your
   favorite teams' games. It never takes over the remote.
+- **Menu (☰, top right):** HDMI inputs, Options, Settings and updates, on a frosted panel.
+- **Recently used:** your last apps, newest first, in a full-width row above the dock.
+- **Weather by the clock:** temperature and a condition icon from Open-Meteo (no account).
+  Pick the city and °C/°F in Options; defaults to Kingston, Jamaica.
 - **tvOS-style focus:** the selected tile lifts with a real shadow and a light sheen, and
   its name appears underneath.
 - **App grid:** press Down to scroll into the rest of your apps. The wallpaper dims as you
@@ -51,7 +55,9 @@ Every push to `main` on github.com/rlubsey/shelf builds a signed APK in GitHub A
 publishes it as a release (`build-<number>`). On the TV:
 
 - An **Update** pill appears in the top bar when a newer build exists. Shelf checks once a day.
-- Or go to **Options → Check for updates** at any time.
+- Or open **☰ → Check for updates** at any time.
+- If an update adds a permission (like the Recently used row did), run `./install.sh --setup`
+  once from your Mac. It grants permissions to the installed Shelf without rebuilding.
 - Choose **Install** and confirm Fire OS's screen. Your settings are kept.
 
 One-time setup:

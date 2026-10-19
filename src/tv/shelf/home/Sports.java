@@ -301,7 +301,7 @@ final class Sports {
         return http;
     }
 
-    private static String get(String url) throws IOException {
+    static String get(String url) throws IOException {
         HttpURLConnection http = open(url);
         try (BufferedReader r = new BufferedReader(
                 new InputStreamReader(http.getInputStream(), StandardCharsets.UTF_8))) {

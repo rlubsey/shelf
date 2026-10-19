@@ -2,6 +2,8 @@
 # Builds Shelf, installs it on the TV and gives it the HOME button.
 #   ./install.sh            build, install, take over HOME
 #   ./install.sh --no-build install build/shelf-home.apk as it is
+#   ./install.sh --setup    only grant permissions / take over HOME for the Shelf already on the TV
+#                           (use after an update from GitHub; nothing is built or installed)
 #   ./install.sh --undo     hand HOME back to Amazon's launcher
 # Pick the device with ADB_SERIAL when more than one is connected.
 set -euo pipefail
@@ -24,8 +26,9 @@ mode=build
 case ${1:-} in
   "") ;;
   --no-build) mode=install ;;
+  --setup) mode=setup ;;
   --undo) mode=undo ;;
-  *) echo "usage: $0 [--no-build | --undo]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--no-build | --setup | --undo]" >&2; exit 2 ;;
 esac
 
 command -v "$ADB" >/dev/null || { echo "error: adb not found — brew install android-platform-tools" >&2; exit 1; }
@@ -66,24 +69,30 @@ if [[ $mode == undo ]]; then
   set_futurity off
   set_guard ""
   sh_ appops set $PKG SYSTEM_ALERT_WINDOW default >/dev/null 2>&1 || true
+  sh_ appops set $PKG GET_USAGE_STATS default >/dev/null 2>&1 || true
   sh_ am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null
   echo "HOME handed back to Amazon's launcher (Shelf stays installed: adb uninstall $PKG)"
   exit 0
 fi
 
-[[ $mode == build ]] && ./build.sh
-[[ -f $APK ]] || { echo "error: $APK not found — run ./build.sh first" >&2; exit 1; }
+if [[ $mode == setup ]]; then
+  installed $PKG || { echo "error: Shelf is not installed on this TV; run ./install.sh first" >&2; exit 1; }
+  echo "setting up the installed Shelf ($(sh_ dumpsys package $PKG | grep -m1 versionName | tr -d ' '))"
+else
+  [[ $mode == build ]] && ./build.sh
+  [[ -f $APK ]] || { echo "error: $APK not found — run ./build.sh first" >&2; exit 1; }
 
-out=$(adb_ install -r "$APK" 2>&1 || true)
-case $out in
-  *Success*) ;;
-  *INSTALL_FAILED_UPDATE_INCOMPATIBLE*)
-    echo "error: the installed Shelf was signed with a different key." >&2
-    echo "  remove it first:  adb uninstall $PKG   (your Shelf settings are lost)" >&2
-    exit 1 ;;
-  *) echo "error: adb install failed: $out" >&2; exit 1 ;;
-esac
-echo "installed $PKG"
+  out=$(adb_ install -r "$APK" 2>&1 || true)
+  case $out in
+    *Success*) ;;
+    *INSTALL_FAILED_UPDATE_INCOMPATIBLE*)
+      echo "error: the installed Shelf was signed with a different key." >&2
+      echo "  remove it first:  adb uninstall $PKG   (your Shelf settings are lost)" >&2
+      exit 1 ;;
+    *) echo "error: adb install failed: $out" >&2; exit 1 ;;
+  esac
+  echo "installed $PKG"
+fi
 
 sh_ dumpsys deviceidle whitelist +$PKG >/dev/null
 # Lets Shelf's watchdog reconnect its HOME service if Android drops it (see Watchdog.java).
@@ -98,6 +107,12 @@ if sh_ appops set $PKG SYSTEM_ALERT_WINDOW allow 2>/dev/null; then
   echo "home switch: allowed"
 else
   echo "warning: could not allow SYSTEM_ALERT_WINDOW; HOME may land on Amazon's screen" >&2
+fi
+# "Recently used" row: lets Shelf see which apps were opened most recently.
+if sh_ appops set $PKG GET_USAGE_STATS allow 2>/dev/null; then
+  echo "recently used: allowed"
+else
+  echo "note: could not allow usage access; the Recently used row stays hidden" >&2
 fi
 sh_ cmd package set-home-activity $PKG/.Home >/dev/null 2>&1 || true
 set_futurity on

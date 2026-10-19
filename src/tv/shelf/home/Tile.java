@@ -42,6 +42,7 @@ final class Tile extends View {
     private final TextPaint inner = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final TextPaint under = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private boolean moving;
+    private final boolean app;
 
     Tile(Context c, Item item, String kind, CharSequence title, int cardW, int cardH, String labels) {
         super(c);
@@ -50,7 +51,8 @@ final class Tile extends View {
         this.title = title;
         this.cardW = cardW;
         this.cardH = cardH;
-        boolean app = Catalog.APPS.equals(kind);
+        boolean app = Catalog.APPS.equals(kind) || Catalog.RECENT.equals(kind);
+        this.app = app;
         labelH = app ? Ui.dp(c, 30) : 0;
         labelAlways = "always".equals(labels);
         labelOnFocus = "focus".equals(labels);
@@ -137,7 +139,7 @@ final class Tile extends View {
             icon.setBounds(left, top, left + size, top + size);
             icon.draw(canvas);
             drawLine(canvas, inner, cardW / 2f, cardH - cardH * 12 / 100f);
-        } else if (!Catalog.APPS.equals(kind)) {
+        } else if (!app) {
             drawLine(canvas, inner, cardW / 2f, cardH / 2f - (inner.ascent() + inner.descent()) / 2);
         }
         if (focused && !moving) canvas.drawRect(card, sheen);

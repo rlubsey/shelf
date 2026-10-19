@@ -65,6 +65,12 @@ final class Config {
     static final Choice SPORTS = new Choice("sports", "Sports scores", "on",
             new String[] {"on", "off"},
             new String[] {"Shown", "Hidden"});
+    static final Choice RECENT = new Choice("recent", "Recently used row", "on",
+            new String[] {"on", "off"},
+            new String[] {"Shown", "Hidden"});
+    static final Choice TEMP = new Choice("temp", "Weather by the clock", "c",
+            new String[] {"c", "f", "off"},
+            new String[] {"°C", "°F", "Hidden"});
     static final Choice ALERTS = new Choice("alerts", "Score alerts in other apps", "favorites",
             new String[] {"favorites", "off"},
             new String[] {"Favorite teams", "Off"});

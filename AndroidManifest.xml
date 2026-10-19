@@ -13,6 +13,8 @@
          they may display over other apps. This is what lets HOME switch to Shelf. Granted by
          install.sh (appops), never shown as a prompt. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- "Recently used" row: which apps you opened last. Granted by install.sh (appops). -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

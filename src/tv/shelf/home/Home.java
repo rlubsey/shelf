@@ -8,7 +8,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.media.tv.TvInputManager;
@@ -28,14 +27,12 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -58,7 +55,7 @@ public final class Home extends Activity {
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Ui.worker("shelf-io");
-    private final List<TextView> chips = new ArrayList<>();
+    private final List<View> chips = new ArrayList<>();
     private Config cfg;
     private TvInputManager tv;
     private int applied = -1, appsGeneration;
@@ -66,7 +63,7 @@ public final class Home extends Activity {
     private FrameLayout root, dockFrame;
     private ImageView wall;
     private View shade;
-    private Glass glass, inputGlass;
+    private Glass glass;
     private FrameLayout shelfFrame;
     private LinearLayout scoresStrip, bar;
     private TextView updateChip;
@@ -90,9 +87,29 @@ public final class Home extends Activity {
     private final List<LinearLayout> gridStrips = new ArrayList<>();
     private Bitmap soft;
     private ScrollView scroll;
-    private TextView clock, gridTitle, inputTitle;
-    private LinearLayout dockStrip, grid, inputStrip;
-    private HorizontalScrollView inputScroll;
+    private TextView clock, gridTitle;
+    private LinearLayout dockStrip, grid;
+
+    // menu (top right): inputs, Options, Settings, updates
+    private MenuButton menuButton;
+    private FrameLayout menuLayer, menuPanel;
+    private LinearLayout menuInputs;
+    private TextView menuInputsTitle, menuUpdateRow, menuOptionsRow;
+    private Glass menuGlass;
+    private boolean menuOpen;
+
+    // recently used apps, above the dock
+    private LinearLayout recentBox, recentStrip;
+    private List<Item> recentItems = new ArrayList<>();
+
+    // weather by the clock
+    private static final long WEATHER_MS = 15 * 60_000L;
+    private LinearLayout weatherBox;
+    private WeatherIcon weatherIcon;
+    private TextView tempText;
+    private Weather.Now weatherNow;
+    private long lastWeather;
+    private String weatherKey = "";
     private List<Item> appsAll = new ArrayList<>(), inputsAll = new ArrayList<>();
     private String movingId, movingKind, wallKey;
     private float userDim;
@@ -108,6 +125,7 @@ public final class Home extends Activity {
         @Override
         public void run() {
             refreshSports(false);
+            refreshWeather(false);
             ui.postDelayed(this, LIVE_REFRESH_MS);
         }
     };
@@ -175,6 +193,7 @@ public final class Home extends Activity {
         Guard.arrived(this);
         cfg.refresh();
         if (cfg.version() != applied) apply();
+        else refreshWeather(false);
         IntentFilter f = new IntentFilter(Intent.ACTION_TIME_TICK);
         f.addAction(Intent.ACTION_TIME_CHANGED);
         f.addAction(Intent.ACTION_TIMEZONE_CHANGED);
@@ -185,6 +204,7 @@ public final class Home extends Activity {
         ui.removeCallbacks(nextPage);
         ui.postDelayed(nextPage, PAGE_MS);
         dailyUpdateCheck();
+        loadRecent();
         net.execute(() -> Watchdog.ensure(getApplicationContext()));
     }
 
@@ -230,12 +250,14 @@ public final class Home extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (movingId != null) stopMoving();
+        if (menuOpen) closeMenu(false);
         if (resumed) focusFirst();
     }
 
     @Override
     public void onBackPressed() {
-        focusFirst();
+        if (menuOpen) closeMenu(true);
+        else focusFirst();
     }
 
     @Override
@@ -267,8 +289,9 @@ public final class Home extends Activity {
     public boolean onKeyDown(int code, KeyEvent e) {
         if (code == KeyEvent.KEYCODE_MENU) {
             View f = getCurrentFocus();
-            if (f instanceof Tile) menu((Tile) f);
-            else startActivity(new Intent(this, Options.class));
+            if (menuOpen) closeMenu(true);
+            else if (f instanceof Tile) menu((Tile) f);
+            else openMenu();
             return true;
         }
         return super.onKeyDown(code, e);
@@ -281,7 +304,8 @@ public final class Home extends Activity {
             @Override
             public View focusSearch(View focused, int direction) {
                 if (direction == View.FOCUS_DOWN && chips.contains(focused)) {
-                    View below = nearest(dockStrip, focused);
+                    boolean recent = recentBox.getVisibility() == View.VISIBLE && recentStrip.getChildCount() > 0;
+                    View below = nearest(recent ? recentStrip : dockStrip, focused);
                     if (below != null) return below;
                 }
                 return super.focusSearch(focused, direction);
@@ -327,6 +351,19 @@ public final class Home extends Activity {
         scroll.addView(column, new FrameLayout.LayoutParams(MATCH, WRAP));
 
         shelfFrame = new FrameLayout(this);
+        shelfFrame.setClipChildren(false);
+        recentBox = new LinearLayout(this);
+        recentBox.setOrientation(LinearLayout.VERTICAL);
+        recentBox.setClipChildren(false);
+        recentBox.setClipToPadding(false);
+        TextView recentTitle = section("Recently used");
+        recentTitle.setPadding(edge(), 0, edge(), 0);
+        recentBox.addView(recentTitle);
+        recentStrip = strip();
+        recentStrip.setPadding(edge(), dp(12), edge(), dp(36)); // room for the focused tile's name
+        recentBox.addView(recentStrip);
+        recentBox.setVisibility(View.GONE);
+        shelfFrame.addView(recentBox, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM));
         column.addView(shelfFrame, new LinearLayout.LayoutParams(MATCH,
                 Math.round(getResources().getDisplayMetrics().heightPixels * SHELF)));
 
@@ -347,18 +384,6 @@ public final class Home extends Activity {
         grid.setClipToPadding(false);
         column.addView(grid, new LinearLayout.LayoutParams(MATCH, WRAP));
 
-        inputTitle = section("Inputs");
-        column.addView(inputTitle);
-        inputStrip = strip();
-        inputScroll = new HorizontalScrollView(this);
-        inputScroll.setFocusable(false);
-        inputScroll.setHorizontalScrollBarEnabled(false);
-        inputScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        inputScroll.setClipChildren(false);
-        inputScroll.setClipToPadding(false);
-        inputScroll.addView(inputStrip, new FrameLayout.LayoutParams(WRAP, WRAP));
-        inputGlass = new Glass(this);
-        column.addView(glassRow(inputScroll, inputGlass, dp(60)), new LinearLayout.LayoutParams(MATCH, WRAP));
 
         bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -368,13 +393,32 @@ public final class Home extends Activity {
         });
         updateChip.setVisibility(View.GONE);
         bar.addView(updateChip);
-        bar.addView(chip("Options", v -> startActivity(new Intent(this, Options.class))));
-        bar.addView(chip("Settings", v -> openSettings()));
+
+        weatherBox = new LinearLayout(this);
+        weatherBox.setGravity(Gravity.CENTER_VERTICAL);
+        weatherIcon = new WeatherIcon(this, 30);
+        weatherBox.addView(weatherIcon);
+        tempText = Ui.text(this, 22, Ui.TEXT, Ui.LIGHT);
+        tempText.setShadowLayer(dp(6), 0, dp(1), 0x99000000);
+        tempText.setPadding(dp(6), 0, 0, 0);
+        weatherBox.addView(tempText);
+        weatherBox.setVisibility(View.GONE);
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(WRAP, WRAP);
+        wlp.leftMargin = dp(18);
+        bar.addView(weatherBox, wlp);
+
         clock = Ui.text(this, 26, Ui.TEXT, Ui.LIGHT);
         clock.setShadowLayer(dp(6), 0, dp(1), 0x99000000);
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(WRAP, WRAP);
-        clp.leftMargin = dp(22);
+        clp.leftMargin = dp(18);
         bar.addView(clock, clp);
+
+        menuButton = new MenuButton(this);
+        menuButton.setOnClickListener(v -> openMenu());
+        chips.add(menuButton);
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(WRAP, WRAP);
+        mlp.leftMargin = dp(20);
+        bar.addView(menuButton, mlp);
         root.addView(bar, new FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP | Gravity.END));
         bar.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol) ui.post(this::renderScores);
@@ -388,6 +432,8 @@ public final class Home extends Activity {
         slp.leftMargin = edge();
         slp.topMargin = dp(47) - dp(ScoreCard.HEIGHT_DP) / 2;
         root.addView(scoresStrip, slp);
+
+        root.addView(buildMenu(), new FrameLayout.LayoutParams(MATCH, MATCH));
 
         root.getViewTreeObserver().addOnGlobalFocusChangeListener((old, now) -> follow(now));
         return root;
@@ -449,7 +495,8 @@ public final class Home extends Activity {
     /** Dock and chips snap back to the top shelf; grid rows glide to the upper third. */
     private void follow(View now) {
         if (now == null) return;
-        if (chips.contains(now) || now.getParent() == dockStrip) {
+        if (menuOpen) return;
+        if (chips.contains(now) || now.getParent() == dockStrip || now.getParent() == recentStrip) {
             scroll.smoothScrollTo(0, 0);
             return;
         }
@@ -459,8 +506,6 @@ public final class Home extends Activity {
         View frame = row.getParent() instanceof View ? (View) row.getParent() : null;
         if (gridStrips.contains(row) && frame != null) {
             y = grid.getTop() + frame.getTop();
-        } else if (row == inputStrip) {
-            y = ((View) inputScroll.getParent()).getTop();
         } else {
             return;
         }
@@ -479,10 +524,14 @@ public final class Home extends Activity {
     private void apply() {
         applied = cfg.version();
         int accent = cfg.accent();
-        for (TextView c : chips) Ui.focusStyle(c, accent, 0x2EFFFFFF, dp(17));
+        for (View c : chips) {
+            if (c instanceof TextView) Ui.focusStyle((TextView) c, accent, 0x2EFFFFFF, dp(17));
+        }
         renderApps();
         renderInputs();
         renderScores();
+        loadRecent();
+        refreshWeather(false);
         background();
         tick();
     }
@@ -505,6 +554,7 @@ public final class Home extends Activity {
                 }
                 appsAll = list;
                 renderApps();
+                loadRecent();
             });
         });
     }
@@ -579,27 +629,26 @@ public final class Home extends Activity {
         settle(restore, keep);
     }
 
+    /** HDMI and other inputs live in the menu, as rows. */
     private void renderInputs() {
-        String keep = focusedId(Catalog.INPUTS);
-        inputStrip.removeAllViews();
-        boolean enabled = "on".equals(cfg.get(Config.INPUTS));
-        List<Item> shown = enabled ? Catalog.visible(cfg, Catalog.INPUTS, inputsAll) : new ArrayList<>();
-        int[] size = cardSize();
-        int h = Math.round(size[1] * 0.5f);
-        Tile restore = null;
+        if (menuInputs == null) return;
+        menuInputs.removeAllViews();
+        List<Item> shown = Catalog.visible(cfg, Catalog.INPUTS, inputsAll);
         for (Item it : shown) {
-            Tile t = tile(it, Catalog.INPUTS, size[0], h);
-            inputStrip.addView(t, gapped());
-            if (it.id.equals(keep)) restore = t;
+            SpannableString label = new SpannableString(Catalog.label(cfg, it)
+                    + (it.state == TvInputManager.INPUT_STATE_CONNECTED ? "   ●" : ""));
+            if (it.state == TvInputManager.INPUT_STATE_CONNECTED) {
+                label.setSpan(new android.text.style.ForegroundColorSpan(0xFF34C759),
+                        label.length() - 1, label.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            menuInputs.addView(menuRow(label, () -> {
+                closeMenu(false);
+                launch(new Intent(it.intent), null);
+            }));
         }
         int v = shown.isEmpty() ? View.GONE : View.VISIBLE;
-        inputTitle.setVisibility(v);
-        View frame = (View) inputScroll.getParent();
-        frame.setVisibility(v);
-        ViewGroup.LayoutParams ilp = inputGlass.getLayoutParams();
-        ilp.height = h + dp(40);
-        inputGlass.setLayoutParams(ilp);
-        settle(restore, keep);
+        menuInputsTitle.setVisibility(v);
+        menuInputs.setVisibility(v);
     }
 
     private void settle(Tile restore, String keep) {
@@ -624,9 +673,9 @@ public final class Home extends Activity {
 
     private List<Tile> tiles() {
         List<Tile> out = new ArrayList<>();
+        collect(recentStrip, out);
         collect(dockStrip, out);
         for (LinearLayout s : gridStrips) collect(s, out);
-        collect(inputStrip, out);
         return out;
     }
 
@@ -670,11 +719,10 @@ public final class Home extends Activity {
 
     private void focusFirst() {
         scroll.scrollTo(0, 0);
-        inputScroll.scrollTo(0, 0);
         View first = dockStrip.getChildAt(0);
-        if (first == null) first = inputStrip.getChildAt(0);
+        if (first == null) first = recentStrip.getChildAt(0);
         landed = dockStrip.getChildCount() > 0;
-        if (first == null) first = chips.get(0);
+        if (first == null) first = menuButton;
         first.requestFocus();
     }
 
@@ -695,14 +743,10 @@ public final class Home extends Activity {
     // ---------------------------------------------------------------- wallpaper
 
     private void background() {
-        String mode = cfg.get(Config.BACKGROUND);
-        File file = "image".equals(mode) ? cfg.wallpaper() : null;
-        boolean photo = "photo".equals(mode) || "image".equals(mode) && file == null;
         root.setBackgroundColor(cfg.background());
-        userDim = file != null || photo ? Integer.parseInt(cfg.get(Config.DIM)) / 100f : 0f;
+        String key = Wall.key(cfg);
+        userDim = key != null ? Integer.parseInt(cfg.get(Config.DIM)) / 100f : 0f;
         updateShade();
-
-        String key = file != null ? file.getPath() + ":" + file.lastModified() : photo ? "photo" : null;
         if (key == null ? wallKey == null : key.equals(wallKey)) return;
         wallKey = key;
         if (key == null) {
@@ -710,42 +754,15 @@ public final class Home extends Activity {
             setSoft(null);
             return;
         }
-        int w = getResources().getDisplayMetrics().widthPixels;
-        int h = getResources().getDisplayMetrics().heightPixels;
+        Context app = getApplicationContext();
         io.execute(() -> {
-            Bitmap b = file != null ? decode(file, w, h) : decodePhoto(w, h);
-            Bitmap blurred = b == null ? null : Blur.of(b);
+            Wall.Pair p = Wall.load(app, cfg);
             ui.post(() -> {
                 if (!key.equals(wallKey)) return;
-                wall.setImageBitmap(b);
-                setSoft(blurred);
+                wall.setImageBitmap(p == null ? null : p.image);
+                setSoft(p == null ? null : p.soft);
             });
         });
-    }
-
-    private static int sample(BitmapFactory.Options o, int w, int h) {
-        int s = 1;
-        while (o.outWidth / (s * 2) >= w && o.outHeight / (s * 2) >= h) s *= 2;
-        return s;
-    }
-
-    private Bitmap decodePhoto(int w, int h) {
-        BitmapFactory.Options o = new BitmapFactory.Options();
-        o.inScaled = false;
-        o.inJustDecodeBounds = true;
-        BitmapFactory.decodeResource(getResources(), R.drawable.wallpaper, o);
-        o.inSampleSize = sample(o, w, h);
-        o.inJustDecodeBounds = false;
-        return BitmapFactory.decodeResource(getResources(), R.drawable.wallpaper, o);
-    }
-
-    private static Bitmap decode(File f, int w, int h) {
-        BitmapFactory.Options o = new BitmapFactory.Options();
-        o.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(f.getPath(), o);
-        o.inSampleSize = sample(o, w, h);
-        o.inJustDecodeBounds = false;
-        return BitmapFactory.decodeFile(f.getPath(), o);
     }
 
     // ---------------------------------------------------------------- actions
@@ -775,6 +792,10 @@ public final class Home extends Activity {
     }
 
     private void menu(Tile t) {
+        if (Catalog.RECENT.equals(t.kind)) {
+            recentMenu(t);
+            return;
+        }
         boolean app = Catalog.APPS.equals(t.kind);
         String[] actions = app
                 ? new String[] {"Move", "Rename", "Hide", "App info"}
@@ -877,7 +898,7 @@ public final class Home extends Activity {
     private List<Glass> allGlasses() {
         List<Glass> out = new ArrayList<>();
         out.add(glass);
-        out.add(inputGlass);
+        if (menuGlass != null) out.add(menuGlass);
         out.addAll(gridGlasses);
         out.addAll(scoreCards);
         return out;
@@ -983,8 +1004,226 @@ public final class Home extends Activity {
                 if (isDestroyed()) return;
                 update = r;
                 updateChip.setVisibility(r == null ? View.GONE : View.VISIBLE);
+                menuButton.setBadge(r != null);
+                if (menuUpdateRow != null) {
+                    menuUpdateRow.setText(r == null ? "Check for updates" : "Install " + r.name);
+                }
             });
         });
+    }
+
+    // ---------------------------------------------------------------- menu
+
+    private View buildMenu() {
+        menuLayer = new FrameLayout(this);
+        menuLayer.setBackgroundColor(0x73000000);
+        menuLayer.setVisibility(View.GONE);
+        menuLayer.setClickable(true);
+        menuLayer.setOnClickListener(v -> closeMenu(true));
+
+        menuPanel = new FrameLayout(this);
+        menuPanel.setClickable(true);
+        menuGlass = new Glass(this, 28);
+        menuGlass.setSource(soft);
+        menuPanel.addView(menuGlass, new FrameLayout.LayoutParams(MATCH, MATCH));
+        View tint = new View(this);
+        tint.setBackground(Ui.round(0x99101114, dp(28)));
+        menuPanel.addView(tint, new FrameLayout.LayoutParams(MATCH, MATCH));
+
+        ScrollView sv = new ScrollView(this);
+        sv.setFocusable(false);
+        sv.setVerticalScrollBarEnabled(false);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(dp(16), dp(26), dp(16), dp(22));
+        sv.addView(list);
+        menuPanel.addView(sv, new FrameLayout.LayoutParams(MATCH, MATCH));
+
+        TextView title = Ui.text(this, 24, Ui.TEXT, Ui.LIGHT);
+        title.setText("Shelf");
+        title.setPadding(dp(14), 0, 0, dp(6));
+        list.addView(title);
+
+        menuInputsTitle = menuSection("Inputs");
+        list.addView(menuInputsTitle);
+        menuInputs = new LinearLayout(this);
+        menuInputs.setOrientation(LinearLayout.VERTICAL);
+        list.addView(menuInputs);
+
+        list.addView(menuSection("Shelf"));
+        menuOptionsRow = menuRow("Options", () -> {
+            closeMenu(false);
+            startActivity(new Intent(this, Options.class));
+        });
+        list.addView(menuOptionsRow);
+        list.addView(menuRow("Settings", () -> {
+            closeMenu(false);
+            openSettings();
+        }));
+        menuUpdateRow = menuRow(update == null ? "Check for updates" : "Install " + update.name, () -> {
+            if (update != null) Updater.offer(this, update);
+            else Updater.check(this);
+        });
+        list.addView(menuUpdateRow);
+
+        FrameLayout.LayoutParams plp = new FrameLayout.LayoutParams(dp(330), MATCH, Gravity.END);
+        plp.setMargins(0, dp(20), dp(20), dp(20));
+        menuLayer.addView(menuPanel, plp);
+        renderInputs();
+        return menuLayer;
+    }
+
+    private TextView menuSection(String name) {
+        TextView t = Ui.text(this, 12, Ui.FAINT, Ui.MEDIUM);
+        t.setText(name.toUpperCase(Locale.ROOT));
+        t.setLetterSpacing(0.14f);
+        t.setPadding(dp(14), dp(18), 0, dp(6));
+        return t;
+    }
+
+    /** A menu row: white pill with dark text when focused, plain white text otherwise. */
+    private TextView menuRow(CharSequence label, Runnable run) {
+        TextView v = Ui.text(this, 17, Ui.TEXT, Ui.MEDIUM);
+        v.setText(label);
+        v.setPadding(dp(14), dp(12), dp(14), dp(12));
+        v.setFocusable(true);
+        v.setClickable(true);
+        v.setOnClickListener(x -> run.run());
+        Ui.focusStyle(v, 0xFFFFFFFF, 0x00000000, dp(14));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        lp.bottomMargin = dp(2);
+        v.setLayoutParams(lp);
+        return v;
+    }
+
+    private void openMenu() {
+        if (menuOpen) return;
+        menuOpen = true;
+        loadInputs();
+        scroll.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        bar.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        menuLayer.setVisibility(View.VISIBLE);
+        menuLayer.setAlpha(0f);
+        menuLayer.animate().alpha(1f).setDuration(180).start();
+        menuPanel.setTranslationX(dp(60));
+        menuPanel.animate().translationX(0).setDuration(220)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator(1.6f)).start();
+        View first = menuInputs.getVisibility() == View.VISIBLE && menuInputs.getChildCount() > 0
+                ? menuInputs.getChildAt(0) : null;
+        if (first == null) first = menuOptionsRow;
+        first.requestFocus();
+    }
+
+    private void closeMenu(boolean animate) {
+        if (!menuOpen) return;
+        menuOpen = false;
+        scroll.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        bar.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        if (animate) {
+            menuLayer.animate().alpha(0f).setDuration(160).withEndAction(() -> menuLayer.setVisibility(View.GONE)).start();
+            menuPanel.animate().translationX(dp(60)).setDuration(160).start();
+            menuButton.requestFocus();
+        } else {
+            menuLayer.setVisibility(View.GONE);
+        }
+    }
+
+    // ---------------------------------------------------------------- recently used
+
+    private void loadRecent() {
+        if (!"on".equals(cfg.get(Config.RECENT))) {
+            recentItems = new ArrayList<>();
+            renderRecent();
+            return;
+        }
+        List<Item> apps = new ArrayList<>(appsAll);
+        List<String> hidden = cfg.list(Recent.HIDE_KEY);
+        Context app = getApplicationContext();
+        int max = cols();
+        io.execute(() -> {
+            List<Item> picked = Recent.pick(app, apps, hidden, max);
+            ui.post(() -> {
+                if (isDestroyed()) return;
+                recentItems = picked;
+                renderRecent();
+            });
+        });
+    }
+
+    private void renderRecent() {
+        String keep = focusedId(Catalog.RECENT);
+        recentStrip.removeAllViews();
+        // Same columns as the app rows: one tile per column, edge to edge.
+        int[] size = cardSize();
+        Tile restore = null;
+        for (int i = 0; i < recentItems.size() && i < cols(); i++) {
+            Item it = recentItems.get(i);
+            Tile t = tile(it, Catalog.RECENT, size[0], size[1]);
+            recentStrip.addView(t, gapped());
+            if (it.id.equals(keep)) restore = t;
+            if (!it.artRequested) loadArt(it);
+        }
+        recentBox.setVisibility(recentItems.isEmpty() ? View.GONE : View.VISIBLE);
+        if (restore != null) restore.requestFocus();
+        else if (keep != null) focusFirst();
+    }
+
+    private void recentMenu(Tile t) {
+        new AlertDialog.Builder(this, Ui.DIALOG)
+                .setTitle(Catalog.label(cfg, t.item))
+                .setItems(new String[] {"Hide from Recently used", "App info"}, (d, which) -> {
+                    if (which == 0) {
+                        List<String> hidden = cfg.list(Recent.HIDE_KEY);
+                        if (!hidden.contains(t.item.id)) hidden.add(t.item.id);
+                        cfg.setList(Recent.HIDE_KEY, hidden);
+                        applied = cfg.version();
+                        loadRecent();
+                    } else {
+                        launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", t.item.id, null)), null);
+                    }
+                })
+                .show();
+    }
+
+    // ---------------------------------------------------------------- weather
+
+    /** Every 15 minutes while the home screen is up; at once when the city or unit changes. */
+    private void refreshWeather(boolean force) {
+        String mode = cfg.get(Config.TEMP);
+        if ("off".equals(mode)) {
+            weatherBox.setVisibility(View.GONE);
+            return;
+        }
+        double lat = Weather.lat(cfg), lon = Weather.lon(cfg);
+        String key = mode + "|" + lat + "|" + lon;
+        long now = System.currentTimeMillis();
+        if (key.equals(weatherKey) && !force && now - lastWeather < WEATHER_MS) {
+            showWeather();
+            return;
+        }
+        if (!key.equals(weatherKey)) weatherNow = null;
+        weatherKey = key;
+        lastWeather = now;
+        boolean f = "f".equals(mode);
+        net.execute(() -> {
+            Weather.Now n = Weather.now(lat, lon, f);
+            ui.post(() -> {
+                if (isDestroyed() || !key.equals(weatherKey)) return;
+                if (n != null) weatherNow = n;
+                else lastWeather = System.currentTimeMillis() - WEATHER_MS + 120_000; // retry in 2 min
+                showWeather();
+            });
+        });
+    }
+
+    private void showWeather() {
+        boolean on = !"off".equals(cfg.get(Config.TEMP)) && weatherNow != null;
+        weatherBox.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (!on) return;
+        weatherIcon.set(Weather.kind(weatherNow.code), weatherNow.day);
+        tempText.setText(weatherNow.temp + "°");
+        weatherBox.setContentDescription(weatherNow.temp + " degrees in " + Weather.city(cfg));
     }
 
     private int dp(float v) {
