@@ -29,8 +29,10 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Updates Shelf from the GitHub releases of {@link #REPO}. GitHub Actions publishes each build
- * as a release tagged {@code build-<versionCode>} with {@code shelf-home.apk} attached; Shelf
+ * Updates Shelf from the GitHub releases of {@link #REPO}. This is the Google TV edition: GitHub
+ * Actions publishes each build of the {@code google-tv} branch as a pre-release tagged
+ * {@code gtv-build-<versionCode>} with {@code shelf-home.apk} attached. Fire TV builds (tagged
+ * {@code build-}) are ignored here, and the Fire TV edition never sees pre-releases. Shelf
  * downloads the newest one and hands it to the system installer, which asks for one press on
  * the remote. Android only accepts the update when it is signed with the same key as the
  * installed app, so nothing but your own builds can replace Shelf this way.
@@ -39,8 +41,8 @@ final class Updater {
     static final String REPO = "rlubsey/shelf";
     static final String CHECKED_KEY = "update.checked";
     static final long DAY_MS = 24 * 3600_000L;
-    private static final String LATEST = "https://api.github.com/repos/" + REPO + "/releases/latest";
-    private static final String TAG_PREFIX = "build-";
+    private static final String RELEASES = "https://api.github.com/repos/" + REPO + "/releases?per_page=30";
+    private static final String TAG_PREFIX = "gtv-build-";
     private static final int TIMEOUT_MS = 15_000;
 
     static final class Release {
@@ -73,25 +75,37 @@ final class Updater {
         }
     }
 
-    /** The latest published release, or null when GitHub can't be reached. Network: off the UI thread. */
+    /** The newest Google TV release, or null when GitHub can't be reached. Network: off the UI thread. */
     static Release latest() {
         try {
-            JSONObject o = new JSONObject(get(LATEST));
-            String tag = o.optString("tag_name");
-            if (!tag.startsWith(TAG_PREFIX)) return null;
-            long code = Long.parseLong(tag.substring(TAG_PREFIX.length()));
-            JSONArray assets = o.optJSONArray("assets");
-            String url = null;
-            for (int i = 0; assets != null && i < assets.length(); i++) {
-                JSONObject a = assets.optJSONObject(i);
-                if (a != null && a.optString("name").endsWith(".apk")) {
-                    url = a.optString("browser_download_url");
-                    break;
+            JSONArray list = new JSONArray(get(RELEASES));
+            Release best = null;
+            for (int r = 0; r < list.length(); r++) {
+                JSONObject o = list.optJSONObject(r);
+                if (o == null || o.optBoolean("draft")) continue;
+                String tag = o.optString("tag_name");
+                if (!tag.startsWith(TAG_PREFIX)) continue;
+                long code;
+                try {
+                    code = Long.parseLong(tag.substring(TAG_PREFIX.length()));
+                } catch (NumberFormatException e) {
+                    continue;
                 }
+                if (best != null && best.code >= code) continue;
+                JSONArray assets = o.optJSONArray("assets");
+                String url = null;
+                for (int i = 0; assets != null && i < assets.length(); i++) {
+                    JSONObject a = assets.optJSONObject(i);
+                    if (a != null && a.optString("name").endsWith(".apk")) {
+                        url = a.optString("browser_download_url");
+                        break;
+                    }
+                }
+                if (url == null || url.isEmpty()) continue;
+                best = new Release(code, o.optString("name", tag), url, o.optString("body"));
             }
-            if (url == null || url.isEmpty()) return null;
-            return new Release(code, o.optString("name", tag), url, o.optString("body"));
-        } catch (IOException | JSONException | NumberFormatException e) {
+            return best;
+        } catch (IOException | JSONException e) {
             return null;
         }
     }

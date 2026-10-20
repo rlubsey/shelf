@@ -1,5 +1,6 @@
-# Builds a signed Shelf APK on every push to main and publishes it as a GitHub release.
-# Shelf on the TV checks the latest release (Options › Check for updates, and once a day).
+# Google TV edition: builds a signed Shelf APK on every push to the google-tv branch and
+# publishes it as a pre-release tagged gtv-build-<n>. Only the Google TV edition looks for
+# those; the Fire TV (main branch) only ever sees the latest full release, never a pre-release.
 #
 # Needs two repository secrets (Settings › Secrets and variables › Actions):
 #   SHELF_KEYSTORE_B64  base64 of release.keystore   (base64 -i release.keystore | pbcopy)
@@ -8,7 +9,7 @@ name: Release Shelf
 
 on:
   push:
-    branches: [main]
+    branches: [google-tv]
     paths:
       - "src/**"
       - "res/**"
@@ -79,8 +80,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NOTES: ${{ github.event.head_commit.message }}
         run: |
-          gh release create "build-$VERSION_CODE" build/shelf-home.apk \
-            --title "Shelf $VERSION_NAME" \
+          gh release create "gtv-build-$VERSION_CODE" build/shelf-home.apk \
+            --target "$GITHUB_SHA" \
+            --title "Shelf for Google TV $VERSION_NAME" \
             --notes "${NOTES:-Manual build}" \
-            --latest
+            --prerelease --latest=false
           rm -f "$RUNNER_TEMP/release.keystore"
