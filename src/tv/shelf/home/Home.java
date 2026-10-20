@@ -98,10 +98,6 @@ public final class Home extends Activity {
     private Glass menuGlass;
     private boolean menuOpen;
 
-    // recently used apps, above the dock
-    private LinearLayout recentBox, recentStrip;
-    private List<Item> recentItems = new ArrayList<>();
-
     // weather by the clock
     private static final long WEATHER_MS = 15 * 60_000L;
     private LinearLayout weatherBox;
@@ -204,7 +200,6 @@ public final class Home extends Activity {
         ui.removeCallbacks(nextPage);
         ui.postDelayed(nextPage, PAGE_MS);
         dailyUpdateCheck();
-        loadRecent();
         net.execute(() -> Watchdog.ensure(getApplicationContext()));
     }
 
@@ -304,8 +299,7 @@ public final class Home extends Activity {
             @Override
             public View focusSearch(View focused, int direction) {
                 if (direction == View.FOCUS_DOWN && chips.contains(focused)) {
-                    boolean recent = recentBox.getVisibility() == View.VISIBLE && recentStrip.getChildCount() > 0;
-                    View below = nearest(recent ? recentStrip : dockStrip, focused);
+                    View below = nearest(dockStrip, focused);
                     if (below != null) return below;
                 }
                 return super.focusSearch(focused, direction);
@@ -352,18 +346,6 @@ public final class Home extends Activity {
 
         shelfFrame = new FrameLayout(this);
         shelfFrame.setClipChildren(false);
-        recentBox = new LinearLayout(this);
-        recentBox.setOrientation(LinearLayout.VERTICAL);
-        recentBox.setClipChildren(false);
-        recentBox.setClipToPadding(false);
-        TextView recentTitle = section("Recently used");
-        recentTitle.setPadding(edge(), 0, edge(), 0);
-        recentBox.addView(recentTitle);
-        recentStrip = strip();
-        recentStrip.setPadding(edge(), dp(12), edge(), dp(36)); // room for the focused tile's name
-        recentBox.addView(recentStrip);
-        recentBox.setVisibility(View.GONE);
-        shelfFrame.addView(recentBox, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM));
         column.addView(shelfFrame, new LinearLayout.LayoutParams(MATCH,
                 Math.round(getResources().getDisplayMetrics().heightPixels * SHELF)));
 
@@ -496,7 +478,7 @@ public final class Home extends Activity {
     private void follow(View now) {
         if (now == null) return;
         if (menuOpen) return;
-        if (chips.contains(now) || now.getParent() == dockStrip || now.getParent() == recentStrip) {
+        if (chips.contains(now) || now.getParent() == dockStrip) {
             scroll.smoothScrollTo(0, 0);
             return;
         }
@@ -530,7 +512,6 @@ public final class Home extends Activity {
         renderApps();
         renderInputs();
         renderScores();
-        loadRecent();
         refreshWeather(false);
         background();
         tick();
@@ -554,7 +535,6 @@ public final class Home extends Activity {
                 }
                 appsAll = list;
                 renderApps();
-                loadRecent();
             });
         });
     }
@@ -673,7 +653,6 @@ public final class Home extends Activity {
 
     private List<Tile> tiles() {
         List<Tile> out = new ArrayList<>();
-        collect(recentStrip, out);
         collect(dockStrip, out);
         for (LinearLayout s : gridStrips) collect(s, out);
         return out;
@@ -720,7 +699,6 @@ public final class Home extends Activity {
     private void focusFirst() {
         scroll.scrollTo(0, 0);
         View first = dockStrip.getChildAt(0);
-        if (first == null) first = recentStrip.getChildAt(0);
         landed = dockStrip.getChildCount() > 0;
         if (first == null) first = menuButton;
         first.requestFocus();
@@ -779,19 +757,7 @@ public final class Home extends Activity {
     }
 
     private void open(Tile t) {
-        if (Catalog.RECENT.equals(t.kind)) {
-            // Back to what was playing, when the app still has it open; otherwise the app itself.
-            android.app.PendingIntent resume = History.opener(t.item.id);
-            if (resume != null) {
-                try {
-                    resume.send();
-                    return;
-                } catch (android.app.PendingIntent.CanceledException ignored) {
-                    // the app closed that session; open the app instead
-                }
-            }
-        }
-        launch(new Intent(t.item.intent), Catalog.APPS.equals(t.kind) || Catalog.RECENT.equals(t.kind) ? t.item.id : null);
+        launch(new Intent(t.item.intent), Catalog.APPS.equals(t.kind) ? t.item.id : null);
     }
 
     private void launch(Intent i, String pkg) {
@@ -804,10 +770,6 @@ public final class Home extends Activity {
     }
 
     private void menu(Tile t) {
-        if (Catalog.RECENT.equals(t.kind)) {
-            recentMenu(t);
-            return;
-        }
         boolean app = Catalog.APPS.equals(t.kind);
         String[] actions = app
                 ? new String[] {"Move", "Rename", "Hide", "App info"}
@@ -1138,77 +1100,6 @@ public final class Home extends Activity {
         } else {
             menuLayer.setVisibility(View.GONE);
         }
-    }
-
-    // ---------------------------------------------------------------- recently used
-
-    private void loadRecent() {
-        if (!"on".equals(cfg.get(Config.RECENT))) {
-            recentItems = new ArrayList<>();
-            renderRecent();
-            return;
-        }
-        List<Item> apps = new ArrayList<>(appsAll);
-        List<String> hidden = cfg.list(Recent.HIDE_KEY);
-        Context app = getApplicationContext();
-        int max = cols();
-        io.execute(() -> {
-            List<Item> picked = Recent.pick(app, apps, hidden, max);
-            ui.post(() -> {
-                if (isDestroyed()) return;
-                recentItems = picked;
-                renderRecent();
-            });
-        });
-    }
-
-    private void renderRecent() {
-        String keep = focusedId(Catalog.RECENT);
-        recentStrip.removeAllViews();
-        // Same columns as the app rows: one tile per column, edge to edge.
-        int[] size = cardSize();
-        Tile restore = null;
-        for (int i = 0; i < recentItems.size() && i < cols(); i++) {
-            Item it = recentItems.get(i);
-            Tile t = tile(it, Catalog.RECENT, size[0], size[1]);
-            recentStrip.addView(t, gapped());
-            if (it.id.equals(keep)) restore = t;
-            if (!it.artRequested) loadArt(it);
-            if ("titles".equals(cfg.get(Config.RECENT_MEDIA))) loadMedia(t, size[0]);
-        }
-        recentBox.setVisibility(recentItems.isEmpty() ? View.GONE : View.VISIBLE);
-        if (restore != null) restore.requestFocus();
-        else if (keep != null) focusFirst();
-    }
-
-    /** Fills a recent tile with what last played in that app, if anything was recorded. */
-    private void loadMedia(Tile t, int width) {
-        Context app = getApplicationContext();
-        String pkg = t.item.id;
-        io.execute(() -> {
-            History.Entry e = History.get(app, pkg);
-            if (e == null) return;
-            android.graphics.Bitmap art = History.artwork(app, pkg, width);
-            ui.post(() -> t.setMedia(art, e.title, e.subtitle));
-        });
-    }
-
-    private void recentMenu(Tile t) {
-        new AlertDialog.Builder(this, Ui.DIALOG)
-                .setTitle(Catalog.label(cfg, t.item))
-                .setItems(new String[] {"Hide from Recently used", "App info"}, (d, which) -> {
-                    if (which == 0) {
-                        List<String> hidden = cfg.list(Recent.HIDE_KEY);
-                        if (!hidden.contains(t.item.id)) hidden.add(t.item.id);
-                        cfg.setList(Recent.HIDE_KEY, hidden);
-                        applied = cfg.version();
-                        loadRecent();
-                    } else {
-                        launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.fromParts("package", t.item.id, null)), null);
-                    }
-                })
-                .show();
     }
 
     // ---------------------------------------------------------------- weather

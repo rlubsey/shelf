@@ -100,17 +100,6 @@ public final class Options extends Activity {
         list.addView(choice(Config.LABELS));
 
         list.addView(section("Home screen"));
-        list.addView(choice(Config.RECENT));
-        list.addView(choice(Config.RECENT_MEDIA));
-        list.addView(action("Clear watch history", null, () -> new AlertDialog.Builder(this, Ui.DIALOG)
-                .setTitle("Clear watch history?")
-                .setMessage("Removes the titles and pictures Shelf saved from what you watched. Apps you used stay in the row.")
-                .setPositiveButton("Clear", (d, w) -> {
-                    History.clear(this);
-                    Toast.makeText(this, "Watch history cleared", Toast.LENGTH_SHORT).show();
-                })
-                .setNegativeButton("Cancel", null)
-                .show()));
         list.addView(choice(Config.TEMP));
         list.addView(action("Weather location", () -> Weather.city(cfg), this::pickCity));
         list.addView(choice(Config.CLOCK));
@@ -156,20 +145,10 @@ public final class Options extends Activity {
     private void refresh() {
         for (Runnable r : refreshers) r.run();
         boolean homeOk = android.provider.Settings.canDrawOverlays(this);
-        boolean recentOk = Recent.allowed(this);
         android.text.SpannableStringBuilder s = new android.text.SpannableStringBuilder();
         dot(s, homeOk, homeOk ? "Home button: ready" : "Home button: blocked. Run ./install.sh from your Mac");
-        if ("on".equals(cfg.get(Config.RECENT))) {
-            s.append('\n');
-            dot(s, recentOk, recentOk ? "Recently used: ready" : "Recently used: needs access. Run ./install.sh --setup");
-            if ("titles".equals(cfg.get(Config.RECENT_MEDIA))) {
-                boolean mediaOk = Recent.mediaAllowed(this);
-                s.append('\n');
-                dot(s, mediaOk, mediaOk ? "What you watched: ready" : "What you watched: needs access. Run ./install.sh --setup");
-            }
-        }
         s.append("\n\nReorder apps: hold OK on a tile, choose Move, then use the arrows. The first row is your dock.");
-        s.append("\n\nScores from ESPN, weather from Open-Meteo. What you watched is kept on this TV only. No accounts, no tracking, no ads.");
+        s.append("\n\nScores from ESPN, weather from Open-Meteo. No accounts, no tracking, no ads.");
         status.setText(s);
     }
 
@@ -234,10 +213,8 @@ public final class Options extends Activity {
         });
         Runnable show = () -> {
             String text = c.name(cfg.get(c));
-            if (c == Config.RECENT && "on".equals(cfg.get(c)) && !Recent.allowed(this)) text += " (needs access)";
             value.setText(row.isFocused() ? "‹  " + text + "  ›" : text);
             boolean off = c == Config.DIM && Wall.key(cfg) == null
-                    || c == Config.RECENT_MEDIA && !"on".equals(cfg.get(Config.RECENT))
                     || c == Config.ALERTS && !"on".equals(cfg.get(Config.SPORTS));
             row.setAlpha(off ? 0.45f : 1f);
         };
@@ -434,7 +411,7 @@ public final class Options extends Activity {
         new AlertDialog.Builder(this, Ui.DIALOG)
                 .setTitle("Reset the home screen layout?")
                 .setMessage("Order, names and hidden tiles go back to default. Colors and sizes stay.")
-                .setPositiveButton("Reset", (d, w) -> cfg.removePrefix("name.", "apps.", "inputs.", Recent.HIDE_KEY))
+                .setPositiveButton("Reset", (d, w) -> cfg.removePrefix("name.", "apps.", "inputs."))
                 .setNegativeButton("Cancel", null)
                 .show();
     }

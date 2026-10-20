@@ -19,7 +19,7 @@ import java.util.Map;
 
 /** Where tiles come from, and which of them the user wants on the home screen. */
 final class Catalog {
-    static final String APPS = "apps", INPUTS = "inputs", RECENT = "recent";
+    static final String APPS = "apps", INPUTS = "inputs";
 
     private Catalog() {}
 
