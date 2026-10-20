@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">Shelf</string>
     <string name="guard_label">Shelf home button</string>
-    <string name="guard_description">Sends the HOME button to the Shelf home screen instead of the TV\'s own. It reads no screen content.</string>
+    <string name="guard_description">Sends the HOME button to the Shelf home screen instead of Amazon\'s. It reads no screen content.</string>
 </resources>

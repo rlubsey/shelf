@@ -292,7 +292,7 @@ final class Sports {
         HttpURLConnection http = (HttpURLConnection) new URL(url).openConnection();
         http.setConnectTimeout(TIMEOUT_MS);
         http.setReadTimeout(TIMEOUT_MS);
-        http.setRequestProperty("User-Agent", "Shelf/1.0 (TV launcher)");
+        http.setRequestProperty("User-Agent", "Shelf/1.0 (Fire TV launcher)");
         int code = http.getResponseCode();
         if (code != HttpURLConnection.HTTP_OK) {
             http.disconnect();

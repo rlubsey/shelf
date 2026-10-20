@@ -135,10 +135,8 @@ final class Updater {
 
     static void install(Activity a, Release r) {
         if (!a.getPackageManager().canRequestPackageInstalls()) {
-            String where = Guard.AMAZON.equals(Guard.stock(a))
-                    ? "Settings › My Fire TV › Developer Options › Install unknown apps › Shelf"
-                    : "Settings › Apps › Security & restrictions › Unknown sources › Shelf";
-            Toast.makeText(a, "Allow Shelf to install updates: " + where, Toast.LENGTH_LONG).show();
+            Toast.makeText(a, "Allow Shelf to install updates: Settings › My Fire TV › Developer Options"
+                    + " › Install unknown apps › Shelf", Toast.LENGTH_LONG).show();
             try {
                 a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                         Uri.parse("package:" + a.getPackageName())));

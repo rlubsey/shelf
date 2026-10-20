@@ -6,7 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageInstaller;
 import android.widget.Toast;
 
-/** Result of an update install: shows the system's confirm screen, or why it failed. */
+/** Result of an update install: shows Fire OS's confirm screen, or why it failed. */
 public final class UpdateReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context c, Intent i) {
