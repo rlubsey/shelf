@@ -115,10 +115,12 @@ public final class Options extends Activity {
         list.addView(section("System"));
         list.addView(action("Check for updates", () -> Updater.installedName(this), () -> Updater.check(this)));
         list.addView(action("Reset order, names and hidden tiles", null, this::reset));
-        list.addView(action("Open Amazon's home screen", null, () -> {
-            Guard.amazon(this);
-            finish();
-        }));
+        if (Guard.stock(this) != null) {
+            list.addView(action("Open " + Guard.stockName(this) + "'s home screen", null, () -> {
+                Guard.openStock(this);
+                finish();
+            }));
+        }
 
         setContentView(root);
         refresh();

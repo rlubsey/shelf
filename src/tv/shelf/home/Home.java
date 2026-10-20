@@ -747,7 +747,7 @@ public final class Home extends Activity {
 
     /**
      * Fire OS answers the generic settings action with a stub that reopens Amazon's home, which
-     * Guard then replaces with ours. The TV settings entry point opens the real settings screen.
+     * Guard then replaces with ours (Google TV is fine either way). The TV settings entry point opens the real settings screen.
      */
     private void openSettings() {
         Intent tvSettings = new Intent(Intent.ACTION_MAIN)
@@ -761,7 +761,7 @@ public final class Home extends Activity {
     }
 
     private void launch(Intent i, String pkg) {
-        if (Guard.AMAZON.equals(pkg)) Guard.pause();
+        if (Guard.isStock(this, pkg)) Guard.pause();
         try {
             startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
         } catch (ActivityNotFoundException | SecurityException e) {

@@ -7,6 +7,10 @@ import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.PixelFormat;
 import android.os.Handler;
 import android.os.Looper;
@@ -16,19 +20,28 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 
 /**
- * Fire OS keeps HOME bound to Amazon's protected launcher and handles the HOME key before any
- * accessibility filter sees it, so this service waits for Amazon's home window and replaces it.
+ * Fire OS keeps HOME bound to Amazon's protected launcher, and Google TV sends its remote's HOME
+ * button to Google's launcher whatever the default is. Both handle the key before any
+ * accessibility filter sees it, so this service waits for the TV's own home window (the "stock"
+ * launcher, see {@link #stock}) and replaces it.
  *
  * A plain startActivity right after a HOME press is held back by Android's five-second
  * app-switch delay. An alarm-fired PendingIntent is sent by system_server, which is exempt,
  * so {@link #home} launches through an alarm. That alarm only fires at once when the global
  * {@code alarm_manager_constants} has {@code min_futurity=0}; install.sh sets it.
  *
- * Amazon's home is covered with a plain overlay until ours has drawn, so it never shows.
+ * The stock home is covered with a plain overlay until ours has drawn, so it never shows.
  */
 public final class Guard extends AccessibilityService {
     static final String AMAZON = "com.amazon.tv.launcher";
     private static final String AMAZON_HOME = "com.amazon.tv.launcher.ui.HomeActivity_vNext";
+    static final String GOOGLE_TV = "com.google.android.apps.tv.launcherx";
+    /** The launchers TVs ship with, in the order they are looked for. */
+    private static final String[] STOCK = {
+        AMAZON, GOOGLE_TV, "com.google.android.tvlauncher", "com.google.android.leanbacklauncher",
+    };
+    private static volatile String stock;
+    private static volatile java.util.Set<String> stockHomes;
     private static final long COVER_MAX_MS = 1500;
     private static final long REPEAT_MS = 1000;
     /**
@@ -52,7 +65,7 @@ public final class Guard extends AccessibilityService {
     private static final long SETTLE_MS = 1500;
     private static final String TAG = "shelf-guard";
 
-    /** Lets Amazon's home stay on screen until the user leaves it. */
+    /** Lets the stock home stay on screen until the user leaves it. */
     static void pause() {
         paused = true;
     }
@@ -81,10 +94,62 @@ public final class Guard extends AccessibilityService {
                 ActivityOptions.makeCustomAnimation(c, 0, 0).toBundle());
     }
 
-    static void amazon(Context c) {
+    /** The launcher this TV came with, or null on a TV without a known one. */
+    static String stock(Context c) {
+        String s = stock;
+        if (s != null) return s.isEmpty() ? null : s;
+        PackageManager pm = c.getPackageManager();
+        s = "";
+        for (String p : STOCK) {
+            try {
+                ApplicationInfo ai = pm.getApplicationInfo(p, 0);
+                if (ai.enabled) {
+                    s = p;
+                    break;
+                }
+            } catch (PackageManager.NameNotFoundException ignored) {
+                // not on this TV
+            }
+        }
+        stock = s;
+        return s.isEmpty() ? null : s;
+    }
+
+    static boolean isStock(Context c, String pkg) {
+        return pkg != null && pkg.equals(stock(c));
+    }
+
+    /** "Amazon", "Google TV" or "Android TV": for labels like "Open Google TV's home screen". */
+    static String stockName(Context c) {
+        String s = stock(c);
+        if (AMAZON.equals(s)) return "Amazon";
+        if (GOOGLE_TV.equals(s)) return "Google TV";
+        return "Android TV";
+    }
+
+    /** The stock launcher's HOME activities, by the class name its windows report. */
+    private static java.util.Set<String> stockHomes(Context c, String pkg) {
+        java.util.Set<String> set = stockHomes;
+        if (set != null) return set;
+        set = new java.util.HashSet<>();
+        Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(pkg);
+        for (ResolveInfo r : c.getPackageManager().queryIntentActivities(i, PackageManager.MATCH_DISABLED_COMPONENTS)) {
+            ActivityInfo a = r.activityInfo;
+            if (a == null) continue;
+            set.add(a.name);
+            if (a.targetActivity != null) set.add(a.targetActivity);
+        }
+        stockHomes = set;
+        android.util.Log.i(TAG, "stock home " + pkg + " " + set);
+        return set;
+    }
+
+    static void openStock(Context c) {
+        String pkg = stock(c);
+        if (pkg == null) return;
         pause();
         Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-                .setPackage(AMAZON).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                .setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             c.startActivity(i);
         } catch (ActivityNotFoundException e) {
@@ -135,7 +200,10 @@ public final class Guard extends AccessibilityService {
         if (pkg == null) return;
         android.util.Log.i(TAG, "window " + pkg + "/" + cls + (paused ? " (paused)" : ""));
         if (getPackageName().contentEquals(pkg)) lastOwn = SystemClock.uptimeMillis();
-        if (!AMAZON.contentEquals(pkg)) {
+        String stock = stock(this);
+        if (stock == null) return;
+        boolean amazon = AMAZON.equals(stock);
+        if (!stock.contentEquals(pkg)) {
             if ("com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) return;
             if (!paused && isHomeHelper(pkg) && SystemClock.uptimeMillis() - lastLaunch < HOME_HELPER_MS) {
                 // Amazon's home just started its preview video: keep going to Shelf (and come back
@@ -152,12 +220,16 @@ public final class Guard extends AccessibilityService {
         // Any Amazon launcher window counts: Fire OS 8 does not always report it as
         // HomeActivity_vNext, and without HOME the launcher is only reachable when paused
         // (Options › Open Amazon's home screen), which this check already respects.
+        // Google's launchers also host other screens (the settings panel, profiles), so only
+        // their HOME activity counts there.
         if (paused) return;
+        boolean home = amazon ? isAmazonHome(cls) : isStockHome(stock, cls);
+        if (!amazon && !home) return;
         long now = SystemClock.uptimeMillis();
         if (now - lastLaunch < REPEAT_MS) return;
-        if (!isAmazonHome(cls) && now - lastOwn < SETTLE_MS) return; // leftovers behind Shelf
+        if (!home && now - lastOwn < SETTLE_MS) return; // leftovers behind Shelf
         lastLaunch = now;
-        android.util.Log.i(TAG, "Amazon home (" + cls + "): switching to Shelf");
+        android.util.Log.i(TAG, "stock home (" + cls + "): switching to Shelf");
         cover();
         home(this);
     }
@@ -171,6 +243,12 @@ public final class Guard extends AccessibilityService {
             if (h.contentEquals(pkg)) return true;
         }
         return false;
+    }
+
+    private boolean isStockHome(String pkg, CharSequence cls) {
+        if (cls == null) return false;
+        String name = cls.toString();
+        return stockHomes(this, pkg).contains(name) || name.endsWith(".HomeActivity");
     }
 
     private static boolean isAmazonHome(CharSequence cls) {

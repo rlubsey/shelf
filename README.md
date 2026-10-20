@@ -1,6 +1,6 @@
 # Shelf
 
-An Apple TV–style home screen for Fire TV, forked from
+An Apple TV–style home screen for Fire TV and Google TV, forked from
 [dumbtv home](https://github.com/humblemuzzu/dumbtv) (MIT).
 
 - **Top shelf:** your photo fills the top half of the screen. It's built into the app,
@@ -45,8 +45,25 @@ chmod +x build.sh install.sh
 ./install.sh            # builds the APK, installs it, takes over the Home button
 ```
 
-To undo, run `./install.sh --undo`, which gives the Home button back to Amazon. To remove
+To undo, run `./install.sh --undo`, which gives the Home button back to the TV's own launcher. To remove
 Shelf entirely, also run `adb uninstall tv.shelf.home`.
+
+### Google TV
+
+The same APK runs on both TVs. Shelf finds the TV's own launcher (Amazon's, Google TV's or
+Android TV's) and takes over Home from it.
+
+1. On the Google TV: Settings → System → About, then press OK on **Android TV OS build**
+   seven times. Then Settings → System → Developer options → turn on **USB debugging**
+   (and **Wireless debugging** / network ADB if your TV lists it).
+2. On the Mac, connect, accept the prompt on the TV, and install:
+   ```sh
+   adb connect 192.168.0.250:5555
+   ADB_SERIAL=192.168.0.250:5555 ./install.sh
+   ```
+   `ADB_SERIAL` picks the TV when both are connected. For the Fire TV use
+   `ADB_SERIAL=192.168.0.252:5555`.
+3. After that, updates come from GitHub on both TVs.
 
 ## Updates without ADB
 
@@ -57,13 +74,14 @@ publishes it as a release (`build-<number>`). On the TV:
 - Or open **☰ → Check for updates** at any time.
 - If an update adds a permission, run `./install.sh --setup`
   once from your Mac. It grants permissions to the installed Shelf without rebuilding.
-- Choose **Install** and confirm Fire OS's screen. Your settings are kept.
+- Choose **Install** and confirm the TV's install screen. Your settings are kept.
 
 One-time setup:
 1. Add two repo secrets, `SHELF_KEYSTORE_B64` (`base64 -i release.keystore | pbcopy`) and
    `SHELF_KEYPASS` (`shelfhome`).
-2. On the TV, go to Settings → My Fire TV → Developer Options → Install unknown apps and turn
-   on **Shelf**.
+2. `./install.sh` allows Shelf to install its own updates. If a TV still asks, turn on
+   **Shelf** under Settings → My Fire TV → Developer Options → Install unknown apps (Fire TV)
+   or Settings → Apps → Security & restrictions → Unknown sources (Google TV).
 
 Never lose `release.keystore`. It stays on your Mac and in the encrypted secret only. A build
 signed with a different key can't update Shelf.
@@ -115,5 +133,5 @@ again.
   Shelf gets the Home button. To switch back, reinstall dumbtv home with its
   `launcher/install.sh`.
 - The Home takeover uses dumbtv's accessibility-service method. This version recognizes
-  Fire OS 8's home screen as well as Fire OS 7's. If Amazon's home still flashes or wins,
+  Fire OS 7 and 8 and Google TV's home screens. If the TV's own home still flashes or wins,
   run `./install.sh --undo`; nothing else is affected.

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Builds Shelf, installs it on the TV and gives it the HOME button.
+# Builds Shelf, installs it on the TV and gives it the HOME button. Works on Fire TV and Google TV.
 #   ./install.sh            build, install, take over HOME
 #   ./install.sh --no-build install build/shelf-home.apk as it is
 #   ./install.sh --setup    only grant permissions / take over HOME for the Shelf already on the TV
 #                           (use after an update from GitHub; nothing is built or installed)
-#   ./install.sh --undo     hand HOME back to Amazon's launcher
-# Pick the device with ADB_SERIAL when more than one is connected.
+#   ./install.sh --undo     hand HOME back to the TV's own launcher
+# Pick the TV with ADB_SERIAL when more than one is connected, e.g.
+#   ADB_SERIAL=192.168.0.250:5555 ./install.sh --setup
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -33,10 +34,18 @@ esac
 
 command -v "$ADB" >/dev/null || { echo "error: adb not found — brew install android-platform-tools" >&2; exit 1; }
 state=$(adb_ get-state 2>/dev/null || true)
-[[ $state == device ]] || { echo "error: no TV connected (adb connect <tv-ip>:5555; set ADB_SERIAL if several)" >&2; exit 1; }
+[[ $state == device ]] || { echo "error: no TV connected, or several (adb connect <tv-ip>:5555; set ADB_SERIAL=<tv-ip>:5555 to pick one)" >&2; exit 1; }
+sdk=$(sh_ getprop ro.build.version.sdk | tr -d '\r')
+model=$(sh_ getprop ro.product.model | tr -d '\r')
+echo "TV: $model (Android API $sdk)"
 
 # Alarms normally fire no sooner than 5 s from now; the home switch needs them immediate.
+# Android 11 and older keep this in a global setting; Android 12+ (Google TV) in device_config.
 set_futurity() {
+  if (( sdk >= 31 )); then
+    if [[ $1 == on ]]; then sh_ device_config put alarm_manager min_futurity 0
+    else sh_ device_config delete alarm_manager min_futurity >/dev/null 2>&1 || true; fi
+  fi
   local cur
   cur=$(sh_ settings get global alarm_manager_constants | tr -d '\r')
   [[ $cur == null ]] && cur=
@@ -71,7 +80,7 @@ if [[ $mode == undo ]]; then
   sh_ appops set $PKG SYSTEM_ALERT_WINDOW default >/dev/null 2>&1 || true
   sh_ appops set $PKG GET_USAGE_STATS default >/dev/null 2>&1 || true
   sh_ am start -a android.intent.action.MAIN -c android.intent.category.HOME >/dev/null
-  echo "HOME handed back to Amazon's launcher (Shelf stays installed: adb uninstall $PKG)"
+  echo "HOME handed back to the TV's own launcher (Shelf stays installed: adb uninstall $PKG)"
   exit 0
 fi
 
@@ -102,11 +111,15 @@ else
   echo "note: could not grant WRITE_SECURE_SETTINGS; if HOME stops working, re-run ./install.sh --no-build"
 fi
 # Android 10+ blocks background activity starts; "display over other apps" is the per-app
-# exemption that lets the HOME switch through on Fire OS 8.
+# exemption that lets the HOME switch through on Fire OS 8 and Google TV.
 if sh_ appops set $PKG SYSTEM_ALERT_WINDOW allow 2>/dev/null; then
   echo "home switch: allowed"
 else
-  echo "warning: could not allow SYSTEM_ALERT_WINDOW; HOME may land on Amazon's screen" >&2
+  echo "warning: could not allow SYSTEM_ALERT_WINDOW; HOME may land on the TV's own home screen" >&2
+fi
+# Lets Shelf install its own updates from GitHub without a trip through Settings.
+if sh_ appops set $PKG REQUEST_INSTALL_PACKAGES allow 2>/dev/null; then
+  echo "updates: allowed"
 fi
 # The Recently used row is gone: take back the usage access older versions were given.
 sh_ appops set $PKG GET_USAGE_STATS default >/dev/null 2>&1 || true
